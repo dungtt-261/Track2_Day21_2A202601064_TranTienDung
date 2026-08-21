@@ -18,15 +18,14 @@
 | 4 | 200 | 0.05 | 5 | 0.7037 | 0.8720 |
 | 5 | 300 | 0.1 | 4 | 0.7123 | 0.8740 |
 
-**Đã chọn:** `n_estimators=200`, `learning_rate=0.1`, `max_depth=5`.
+**Đã chọn:** `n_estimators=200`, `learning_rate=0.1`, `max_depth=5` — `f1_score` cao nhất.
 
-**Lý do:** Bộ này đạt `f1_score` cao nhất (0.7149). Đáng chú ý là lần có accuracy cao nhất
-lại là lần 1 (0.8780) chứ không phải lần 3 — nếu chọn theo accuracy tôi đã lấy nhầm mô hình
-bắt được ít trường hợp thu nhập cao hơn. Về đánh đổi tham số, hạ `learning_rate` từ 0.1
-xuống 0.05 mà giữ nguyên `n_estimators=200` (lần 4 so với lần 3) làm f1 giảm còn 0.7037, vì
+**Lý do:** Lần có accuracy cao nhất lại là lần 1 (0.8780) chứ không phải lần 3; chọn theo
+accuracy tôi đã lấy nhầm mô hình bắt được ít trường hợp thu nhập cao hơn. Hạ `learning_rate`
+từ 0.1 xuống 0.05 mà giữ `n_estimators=200` (lần 4 so với lần 3) làm f1 giảm còn 0.7037, vì
 mỗi cây đóng góp ít hơn nhưng số vòng boosting không tăng để bù. Lần 2 minh họa rõ nhất rủi
-ro của accuracy: `max_depth=2` với 50 cây kéo f1 xuống 0.6051 — dưới ngưỡng 0.65 và bị
-quality gate chặn — trong khi accuracy vẫn ở mức 0.8460 trông rất khả quan.
+ro của accuracy: `max_depth=2` với 50 cây kéo f1 xuống 0.6051 — dưới ngưỡng và bị chặn —
+trong khi accuracy vẫn 0.8460, trông rất khả quan.
 
 ## 2. Vì Sao Ngưỡng Đặt Trên F1 Chứ Không Phải Accuracy
 
@@ -42,31 +41,37 @@ trộn điểm của lớp đa số vào, kéo giá trị lên cao và làm ngư
 
 | Khó khăn | Nguyên nhân | Cách giải quyết |
 |---|---|---|
-| `import mlflow` lỗi thiếu `pkg_resources` | setuptools ≥ 81 đã gỡ `pkg_resources`, mlflow 2.13 vẫn dùng | Ghim `setuptools<81` trong `requirements.txt` |
-| `dvc push` báo AccessDenied | IAM group chỉ có quyền EC2/IAM/VPC, không có quyền S3 | Tạo policy scope riêng vào `income-lab-*` theo quyền tối thiểu |
-| Push không kích hoạt pipeline | Repo là fork, GitHub mặc định tắt Actions cho push trên fork | Bật thủ công trong tab Actions |
+| `import mlflow` lỗi thiếu `pkg_resources` | setuptools ≥ 81 đã gỡ `pkg_resources` | Ghim `setuptools<81` |
+| `dvc push` báo AccessDenied | IAM group không có quyền S3 nào | Tạo policy scope vào `income-lab-*` theo quyền tối thiểu |
+| Push không kích hoạt pipeline | Repo là fork, GitHub tắt Actions cho push trên fork | Bật thủ công trong tab Actions |
 
 ## 4. So Sánh Bước 2 và Bước 3
 
 | | f1_score | accuracy |
 |---|---|---|
-| Bước 2 (chỉ `train_batch1`, 22.361 mẫu) | 0.7149 | 0.8740 |
-| Bước 3 (thêm `train_batch2`, 44.722 mẫu) | 0.7354 | 0.8820 |
+| Bước 2 (22.361 mẫu) | 0.7149 | 0.8740 |
+| Bước 3 (44.722 mẫu) | 0.7354 | 0.8820 |
 
 **Nhận xét:** Gấp đôi dữ liệu làm f1 tăng 0,0205 — cải thiện có thật nhưng khiêm tốn, phù
-hợp với việc hai nửa dữ liệu được chia ngẫu nhiên từ cùng một nguồn nên cùng phân phối và
-không mang thông tin mới về bản chất. Điều thực sự được kiểm chứng ở Bước 3 không phải con
-số cao hơn, mà là quy trình tự động chạy đúng: một commit cập nhật file `.dvc` kéo trọn vòng
-huấn luyện, kiểm tra chất lượng và triển khai lại, không cần thao tác thủ công nào. Một chi
-tiết xác nhận tính tái tạo: `f1_score` do CI runner tính ở Bước 2 trùng đến từng chữ số với
-kết quả chạy trên máy cá nhân, nhờ cố định `random_state=42`.
+hợp với việc hai nửa dữ liệu cùng phân phối nên không mang thông tin mới về bản chất. Điều
+thực sự được kiểm chứng ở Bước 3 là quy trình tự động chạy đúng: một commit `.dvc` kéo trọn
+vòng huấn luyện, kiểm tra chất lượng và triển khai lại, không cần thao tác thủ công. `f1` do
+CI tính ở Bước 2 trùng đến từng chữ số với kết quả máy cá nhân, nhờ `random_state=42`.
 
-## 5. Kiểm Chứng Quality Gate
+## 5. Phần Bonus Đã Thực Hiện
 
-Tôi cố tình đẩy bộ tham số yếu (50/0.05/2) lên pipeline: Quality Gate dừng với
-`FAILED: f1_score 0.5907 < 0.65` và Release bị skip đúng như thiết kế. Tuy nhiên bước upload
-model nằm trong job Train, tức **chạy trước** Quality Gate, nên model không đạt chuẩn vẫn
-ghi đè `artifacts/current/model.joblib` trên S3. VM lúc đó chưa bị ảnh hưởng vì Release
-không chạy, nhưng service đặt `Restart=always` — nếu VM khởi động lại, nó sẽ tải đúng model
-hỏng đó. Cách sửa là chuyển bước upload sang sau Quality Gate, hoặc upload vào đường dẫn
-tạm rồi mới "thăng cấp" thành `current` khi đã qua ngưỡng.
+- [ ] **Bonus 1** — DagsHub: chưa làm.
+- [x] **Bonus 2** — Quét ngưỡng 0.1–0.9 bằng `predict_proba`. Ngưỡng tối ưu **0.30** cho f1
+  **0.7537**, hơn ngưỡng mặc định 0.5 là 0,0183 — đúng dự đoán 0.5 không tối ưu với dữ liệu
+  mất cân bằng.
+- [x] **Bonus 3** — `outputs/detail.txt` chứa confusion matrix và precision/recall từng lớp,
+  lưu kèm `report.json`. Lớp thu nhập cao có precision 0.828 nhưng recall chỉ 0.661 — bỏ sót
+  42/124 ca. Sai lầm này tốn kém hơn: bỏ sót thì người đó không được tiếp cận, còn gán nhầm
+  chỉ tốn thêm một bước xác minh.
+- [x] **Bonus 4** — Trước khi release, so sánh f1 mới với `artifacts/current/report.json`.
+  Quá trình này lộ ra một lỗ hổng: bước upload nằm trong job Train nên **chạy trước** Quality
+  Gate, model hỏng vẫn ghi đè `current`. Đã sửa thành upload vào `candidate/` rồi mới thăng
+  cấp sau khi qua cả hai cổng. Thử với bộ 100/0.1/3 (f1 0.7014 — qua ngưỡng 0.65 nhưng kém
+  bản đang chạy 0.7354): pipeline dừng đúng chỗ, `current/` giữ nguyên model tốt.
+- [x] **Bonus 5** — Cảnh báo khi tỷ lệ lớp dương lệch quá 5 điểm phần trăm so với 24,8%,
+  ghi vào `report.json`.
