@@ -97,6 +97,9 @@ jobs:
           echo "f1_score cua lan chay nay: $F1"
 
       - name: Upload model to Cloud Storage
+        # Bonus 4: upload vao candidate/ chu KHONG ghi de current/.
+        # Model chi duoc "thang cap" thanh current sau khi qua Quality Gate,
+        # nen mot model hong khong the lam sap service dang chay.
         env:
           ARTIFACT_BUCKET: ${{ secrets.ARTIFACT_BUCKET }}
         run: |
@@ -105,19 +108,21 @@ jobs:
           import boto3
 
           bucket = os.environ["ARTIFACT_BUCKET"]
-          key = "artifacts/current/model.joblib"
-
           s3 = boto3.client("s3")
-          s3.upload_file("models/model.joblib", bucket, key)
 
-          print(f"Da upload model len s3://{bucket}/{key}")
+          s3.upload_file("models/model.joblib", bucket, "artifacts/candidate/model.joblib")
+          s3.upload_file("outputs/report.json", bucket, "artifacts/candidate/report.json")
+
+          print(f"Da upload candidate len s3://{bucket}/artifacts/candidate/")
           PYEOF
 
       - name: Save report as artifact
         uses: actions/upload-artifact@v4
         with:
           name: report
-          path: outputs/report.json
+          path: |
+            outputs/report.json
+            outputs/detail.txt
 
 
   # ---------------------------------------------------------------------------
@@ -136,6 +141,32 @@ jobs:
     runs-on: ubuntu-latest
     steps:
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install boto3
+        run: pip install boto3==1.34.100
+
+      - name: Authenticate to Cloud Storage
+        env:
+          STORAGE_CREDENTIALS: ${{ secrets.STORAGE_CREDENTIALS }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+        run: |
+          python - <<'PYEOF'
+          import json, os
+
+          creds = json.loads(os.environ["STORAGE_CREDENTIALS"])
+          region = os.environ.get("AWS_REGION") or "us-east-1"
+
+          with open(os.environ["GITHUB_ENV"], "a") as env_file:
+              for key in ("aws_access_key_id", "aws_secret_access_key"):
+                  value = creds[key]
+                  print(f"::add-mask::{value}")
+                  env_file.write(f"{key.upper()}={value}\n")
+              env_file.write(f"AWS_DEFAULT_REGION={region}\n")
+          PYEOF
+
       - name: Check quality gate
         env:
           F1: ${{ needs.train.outputs.f1 }}
@@ -152,7 +183,68 @@ jobs:
                   f"FAILED: f1_score {f1:.4f} < {THRESHOLD}. Huy trien khai."
               )
 
-          print(f"PASSED: f1_score {f1:.4f} >= {THRESHOLD}. Dang trien khai model.")
+          print(f"PASSED: f1_score {f1:.4f} >= {THRESHOLD}.")
+          PYEOF
+
+      - name: Compare with current model
+        # Bonus 4: chi trien khai khi model moi khong te hon model dang chay.
+        env:
+          F1: ${{ needs.train.outputs.f1 }}
+          ARTIFACT_BUCKET: ${{ secrets.ARTIFACT_BUCKET }}
+        run: |
+          python - <<'PYEOF'
+          import json
+          import os
+          import boto3
+          from botocore.exceptions import ClientError
+
+          bucket = os.environ["ARTIFACT_BUCKET"]
+          new_f1 = float(os.environ["F1"])
+          s3 = boto3.client("s3")
+
+          try:
+              body = s3.get_object(
+                  Bucket=bucket, Key="artifacts/current/report.json"
+              )["Body"].read()
+              old_f1 = float(json.loads(body)["f1_score"])
+          except ClientError as exc:
+              if exc.response["Error"]["Code"] in ("NoSuchKey", "404"):
+                  print("Chua co model current de so sanh - lan trien khai dau tien.")
+                  raise SystemExit(0)
+              raise
+
+          print(f"f1 hien tai dang chay : {old_f1:.4f}")
+          print(f"f1 cua model moi      : {new_f1:.4f}")
+          print(f"Chenh lech            : {new_f1 - old_f1:+.4f}")
+
+          if new_f1 < old_f1:
+              raise SystemExit(
+                  f"FAILED: model moi ({new_f1:.4f}) te hon model dang chay "
+                  f"({old_f1:.4f}). Giu nguyen ban hien tai, huy trien khai."
+              )
+
+          print("PASSED: model moi khong te hon ban dang chay.")
+          PYEOF
+
+      - name: Promote candidate to current
+        # Chi chay khi ca hai cong kiem tra o tren deu qua.
+        env:
+          ARTIFACT_BUCKET: ${{ secrets.ARTIFACT_BUCKET }}
+        run: |
+          python - <<'PYEOF'
+          import os
+          import boto3
+
+          bucket = os.environ["ARTIFACT_BUCKET"]
+          s3 = boto3.client("s3")
+
+          for name in ("model.joblib", "report.json"):
+              s3.copy_object(
+                  Bucket=bucket,
+                  CopySource={"Bucket": bucket, "Key": f"artifacts/candidate/{name}"},
+                  Key=f"artifacts/current/{name}",
+              )
+              print(f"Da thang cap {name} -> artifacts/current/{name}")
           PYEOF
 
 
