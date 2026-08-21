@@ -60,3 +60,13 @@ số cao hơn, mà là quy trình tự động chạy đúng: một commit cập
 huấn luyện, kiểm tra chất lượng và triển khai lại, không cần thao tác thủ công nào. Một chi
 tiết xác nhận tính tái tạo: `f1_score` do CI runner tính ở Bước 2 trùng đến từng chữ số với
 kết quả chạy trên máy cá nhân, nhờ cố định `random_state=42`.
+
+## 5. Kiểm Chứng Quality Gate
+
+Tôi cố tình đẩy bộ tham số yếu (50/0.05/2) lên pipeline: Quality Gate dừng với
+`FAILED: f1_score 0.5907 < 0.65` và Release bị skip đúng như thiết kế. Tuy nhiên bước upload
+model nằm trong job Train, tức **chạy trước** Quality Gate, nên model không đạt chuẩn vẫn
+ghi đè `artifacts/current/model.joblib` trên S3. VM lúc đó chưa bị ảnh hưởng vì Release
+không chạy, nhưng service đặt `Restart=always` — nếu VM khởi động lại, nó sẽ tải đúng model
+hỏng đó. Cách sửa là chuyển bước upload sang sau Quality Gate, hoặc upload vào đường dẫn
+tạm rồi mới "thăng cấp" thành `current` khi đã qua ngưỡng.
